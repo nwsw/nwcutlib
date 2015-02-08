@@ -347,6 +347,7 @@ function nwcItem.new(cliptext,level)
 	if level < 1 then return cliptext end
 
 	local ObjType = nil
+	local UserType = nil
 	local Opts = {}
 	local isFake = false
 	local doCapture = nwctxt.CaptureOptData
@@ -357,6 +358,8 @@ function nwcItem.new(cliptext,level)
 		elseif ObjType == "Fake" then
 			ObjType = fld
 			isFake = true
+		elseif (ObjType == "User") and not UserType then
+			UserType = fld
 		else
 			local lbl,data = fld:match("^([%w%-%_]+)[%:%s]+(.*)")
 			lbl = lbl or fld
@@ -368,6 +371,7 @@ function nwcItem.new(cliptext,level)
 	if ObjType then
 		local item = {["ObjType"]=ObjType,["Opts"]=Opts,["Level"]=level}
 		if isFake then item.Fake = true end
+		if ObjType == "User" then item.UserType = UserType or "..." end
 		setmetatable(item,nwcItem)
 		return item
 	end
@@ -379,6 +383,8 @@ function nwcItem:WriteUsing(writeFunc)
 	if self.Fake then writeFunc("|Fake") end
 
 	writeFunc("|",self.ObjType)
+
+	if self.UserType then writeFunc("|",self.UserType) end
 
 	for k,v in pairs(self.Opts) do
 		writeFunc("|",k)
