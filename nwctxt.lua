@@ -290,6 +290,8 @@ function nwctxt.ClassifyOptTag(ObjType,Tag)
 	if not c then
 		-- Tag is Visibility,Color or unlisted
 		return cd.opt_Raw
+	elseif ObjType == "User" then
+		return (Tag == "Pos") and cd.opt_Num or cd.opt_Raw
 	elseif c == 1 then
 		-- Tag is Opts,Dur,Dur2,Endings
 		return cd.opt_Associative
@@ -400,6 +402,8 @@ function nwcItem:WriteUsing(writeFunc)
 end
 
 function nwcItem:IsFake() return (self.Fake == true) or (self.ObjType == "Context") end
+
+function nwcItem:GetUserType() return (self.ObjType == "User") and self.UserType or false end
 
 function nwcItem:Is(t)
 	return (self.ObjType == t)
