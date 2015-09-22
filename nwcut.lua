@@ -52,7 +52,7 @@ end
 function nwcut.items() return nwcut.getitem end
 
 function nwcut.run(usertoolCmd)
-	local vlist = "_VERSION,arg,assert,bit32,error,getmetatable,ipairs,math,next,nwcItem,nwcNotePos,nwcNotePosList,nwcOptGroup,nwcOptList,nwcOptText,nwcPlayContext,nwcut,pairs,pcall,print,select,setmetatable,string,StringBuilder,table,tonumber,tostring,type"
+	local vlist = "_VERSION,arg,assert,bit32,error,getmetatable,ipairs,math,next,nwc,nwcItem,nwcNotePos,nwcNotePosList,nwcOptGroup,nwcOptList,nwcOptText,nwcPlayContext,nwcut,pairs,pcall,print,select,setmetatable,string,utf8string,StringBuilder,table,tonumber,tostring,type"
 	local SandboxEnv = {}
 	for o in vlist:gmatch("[^,]+") do SandboxEnv[o] = _ENV[o] end
 
