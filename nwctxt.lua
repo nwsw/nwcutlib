@@ -1,5 +1,4 @@
--- nwctxt.lua: Utility definitions and classes for processing NoteWorthy Composer nwctxt using Lua 
-
+-- nwctxt.lua: Utility definitions and classes for processing NoteWorthy Composer nwctxt using Lua
 nwctxt = {}
 
 function nwctxt.ProtectTable(tbl) return setmetatable({},{
@@ -56,6 +55,7 @@ local cd=nwctxt.const
 local function hasValue(v) return (v and (v ~= "")) or false end
 local function CopyKeySig(dest,src)	for k,v in pairs(src) do dest[k] = v end end
 local function ripairs(t) local function r2(t,i) i=i-1;if t[i]~=nil then return i,t[i] end end return r2, t, #t+1 end
+local function mergeItem(o1,o2)	for k,v in pairs(o2.Opts) do o1.Opts[k] = v end end
 
 function nwctxt.GetClefStdCenterTone(clef) return dict.ClefCenterTones[clef] or dict.ClefCenterTones['Treble'] end
 function nwctxt.GetOffsetAccidental(offset) return dict.Accidentals[tonumber(offset)+3] or "" end
@@ -253,7 +253,7 @@ end
 
 local ObjTyp_D = {
 	Note=1,Chord=1,Bar=1,Rest=1,Text=1,Dynamic=1,Clef=1,Key=1,TimeSig=1,
-	Locale=2,Editor=2,SongInfo=2,PgSetup=2,Font=2,PgMargins=2,
+	Locale=3,Editor=3,SongInfo=3,PgSetup=3,Font=3,PgMargins=3,
 	AddStaff=2,StaffProperties=2,StaffInstrument=2
 	}
 
@@ -265,6 +265,8 @@ function nwctxt.ClassifyObjType(ObjType)
 		return cd.objtyp_StaffNotation
 	elseif otc == 2 then
 		return cd.objtyp_StaffProperty
+	elseif otc == 3 then
+		return cd.objtyp_FileProperty
 	elseif ObjType:find("^Lyric") then
 		return cd.objtyp_StaffLyric
 	end
@@ -473,6 +475,153 @@ function nwcItem:AllNotePositions()
 end
 
 		
+----------------------------------------------------------------
+local nwcStaff = {ID='nwcStaff'}
+nwcStaff.__index = nwcStaff
+
+function nwcStaff.new()
+	local o = {
+		AddStaff = nwcItem.new('|AddStaff|Name:"Staff"|Group:"Standard"'),
+		StaffProperties = nwcItem.new('|StaffProperties|Device:0|Channel:1|EndingBar:Section Close|Visible:Y|BoundaryTop:12|BoundaryBottom:12|Lines:5|Color:Default'),
+		StaffInstrument = nwcItem.new('|StaffInstrument|Trans:0|DynVel:10,30,45,60,75,92,108,127'),
+		Lyrics = nwcItem.new('|Lyrics|Placement:Bottom|Align:Standard Rules|Offset:0'),
+		Lyric = {},
+		Items = {},
+		}
+
+	setmetatable(o,nwcStaff)
+	return o
+end
+
+nwctxt.nwcStaff = nwcStaff.new
+
+function nwcStaff:add(item)
+	local c = nwcut.ClassifyObjType(item.ObjType)
+	if c == nwcut.const.objtyp_StaffNotation then
+		table.insert(self.Items,item)
+	elseif item.ObjType:match('Lyric%d') then
+		table.insert(self.Lyric,item)
+	elseif self[item.ObjType] then
+		mergeItem(self[item.ObjType],item)
+	else
+		assert(false,'Unrecognized staff object '..item.ObjType)
+	end
+end
+
+function nwcStaff:save(f)
+	f(self.AddStaff)
+	f(self.StaffProperties)
+	f(self.StaffInstrument)
+	if #self.Lyric > 0 then
+		f(self.Lyrics)
+		for i,v in ipairs(self.Lyric) do
+			if v then f(v) end
+		end
+	end
+	for i,v in ipairs(self.Items) do f(v) end
+end
+
+----------------------------------------------------------------
+local nwcFile = {ID='nwcFile'}
+nwcFile.__index = nwcFile
+
+local nwcFilePropOrder = {'Editor','SongInfo','PgSetup','PgMargins'}
+local nwcFilePropDefaults = {
+	Editor='|Editor|ActiveStaff:1|CaretIndex:1|SelectIndex:0|CaretPos:0',
+	SongInfo='|SongInfo|Title:""|Author:""|Lyricist:""|Copyright1:""|Copyright2:""',
+	PgSetup='|PgSetup|StaffSize:16|Zoom:4||TitlePage:Y|JustifyVertically:Y|PrintSystemSepMark:N|ExtendLastSystem:N|DurationPadding:Y|PageNumbers:0|StaffLabels:None|BarNumbers:None|StartingBar:1',
+	PgMargins='|PgMargins|Left:1.27|Top:1.27|Right:1.27|Bottom:1.27|Mirror:N'
+}
+
+function nwcFile.new()
+	local o = {}
+
+	-- force level 2 for this functionality
+	nwcut.setlevel(2)
+
+	for k,v in pairs(nwcFilePropDefaults) do
+		o[k] = nwcItem.new(v)
+	end
+
+	o.Font = {
+		StaffItalic = nwcItem.new('|Font|Style:StaffItalic|Typeface:"Times New Roman"|Size:10|Bold:Y|Italic:Y|CharSet:0'),
+		StaffBold = nwcItem.new('|Font|Style:StaffBold|Typeface:"Times New Roman"|Size:8|Bold:Y|Italic:N|CharSet:0'),
+		};
+
+	o.Staff = {nwcStaff.new()}
+
+	setmetatable(o,nwcFile)
+	return o
+end
+
+function nwcFile:load(items)
+	items = items or nwcut.items
+	local cstaff = false
+
+	for item in items() do
+		local objt = item.ObjType
+		local c = nwcut.ClassifyObjType(objt)
+
+		if nwcFilePropDefaults[objt] then
+			mergeItem(self[objt],item)
+		elseif item:Is('Font') then
+			local fs = item:Get('Style')
+			if fs then self.Font[fs] = item end
+		else
+			if (objt == 'AddStaff') or not cstaff then
+				if cstaff then table.insert(self.Staff,nwcStaff.new()) end
+				cstaff = self.Staff[#self.Staff]
+			end
+
+			cstaff:add(item)
+		end
+	end
+
+	if nwcut.getprop('Mode') == nwcut.const.mode_ClipText then
+		self.Editor.Opts.SelectIndex = #cstaff.Items + 1
+	end
+end
+
+function nwcFile:save(f)
+	f = f or nwcut.writeline
+	if nwcut.getprop('ReturnMode') == cd.mode_FileText then
+		f(string.format('!NoteWorthyComposer(%s)',nwcut.getprop('HdrVersion')))
+		for _,k in ipairs(nwcFilePropOrder) do
+			f(self[k])
+		end
+
+		for _,k in ipairs(nwc.txt.TextExpressionFonts) do
+			if self.Font[k] then f(self.Font[k]) end
+		end
+
+		for i,v in ipairs(self.Staff) do
+			v:save(f)
+		end
+		f('!NoteWorthyComposer-End')
+	else
+		local staff,i1,i2 = self:getSelection()
+
+		f(string.format('!NoteWorthyComposerClip(%s,Single)',nwcut.getprop('HdrVersion')))
+		for i=i1,i2 do
+			local o = staff.Items[i]
+			if not o:IsFake() then f(o) end
+		end
+		f('!NoteWorthyComposerClip-End')
+	end
+end
+
+nwctxt.loadFile = function(items)
+	local score = nwcFile.new()
+	score:load(items)
+	return score
+end
+
+function nwcFile:getSelection()
+	local e = self.Editor
+	local staffidx, i1, i2 = e:GetNum('ActiveStaff'),e:GetNum('CaretIndex') or 1,e:GetNum('SelectIndex') or 0
+	local staff = self.Staff[staffidx] or self.Staff[1]
+	return staff,math.min(i1,i2),math.max(i1,i2)-1
+end
 
 ----------------------------------------------------------------
 nwcPlayContext = {ID='nwcPlayContext',__tostring=StringBuilder.Writer}
