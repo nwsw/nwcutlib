@@ -431,11 +431,12 @@ end
 
 function nwcItem:GetNum(...) return tonumber(self:Get(...)) end
 
-function nwcItem:Provide(lbl,data)
-	if not self.Opts[lbl] then
-		self.Opts[lbl] = nwctxt.CaptureOptData(self.Level,self.ObjType,lbl,data or "")
-	end
+function nwcItem:Set(lbl,data)
+	self.Opts[lbl] = nwctxt.CaptureOptData(self.Level,self.ObjType,lbl,data or "")
+end
 
+function nwcItem:Provide(lbl,data)
+	if not self.Opts[lbl] then Set(lbl,data) end
 	return self.Opts[lbl]
 end
 
@@ -509,6 +510,7 @@ function nwcStaff:add(item)
 end
 
 function nwcStaff:save(f)
+	f = f or nwcut.writeline
 	f(self.AddStaff)
 	f(self.StaffProperties)
 	f(self.StaffInstrument)
@@ -582,6 +584,35 @@ function nwcFile:load(items)
 	end
 end
 
+function nwcFile:filterSelection(f)
+	local staff,i1,i2 = self:getSelection()
+	local items,i = staff.Items,i1
+	while i < i2 do
+		local o = items[i]
+		local o2 = f(o,self,staff,i)
+		if type(o2) == 'table' then
+			if o2.ID == 'nwcItem' then
+				items[i],i = o2,i+1
+			else
+				table.remove(items,i)
+				i2 = i2 - 1
+				for _,v in ipairs(o2) do
+					table.insert(items,i,v)
+					i,i2 = i+1,i2+1
+				end
+			end
+		elseif o2 == 'delete' then
+			table.remove(items,i)
+			i2=i2-1
+		else
+			i=i+1
+		end
+	end
+
+	self.Editor.Opts.SelectIndex = i2
+	return self
+end
+
 function nwcFile:save(f)
 	f = f or nwcut.writeline
 	if nwcut.getprop('ReturnMode') == cd.mode_FileText then
@@ -599,13 +630,8 @@ function nwcFile:save(f)
 		end
 		f('!NoteWorthyComposer-End')
 	else
-		local staff,i1,i2 = self:getSelection()
-
 		f(string.format('!NoteWorthyComposerClip(%s,Single)',nwcut.getprop('HdrVersion')))
-		for i=i1,i2 do
-			local o = staff.Items[i]
-			if not o:IsFake() then f(o) end
-		end
+		self:filterSelection(function(o) if not o:IsFake() then f(o) end end)
 		f('!NoteWorthyComposerClip-End')
 	end
 end
