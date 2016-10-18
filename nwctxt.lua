@@ -53,9 +53,15 @@ local dict = {
 local cd=nwctxt.const
 
 local function hasValue(v) return (v and (v ~= "")) or false end
+local function parmswap(swap,v1,v2) if swap then return v2,v1 else return v1,v2 end end
 local function CopyKeySig(dest,src)	for k,v in pairs(src) do dest[k] = v end end
 local function ripairs(t) local function r2(t,i) i=i-1;if t[i]~=nil then return i,t[i] end end return r2, t, #t+1 end
 local function mergeItem(o1,o2)	for k,v in pairs(o2.Opts) do o1.Opts[k] = v end end
+local function tableContains(t,o) for k,v in pairs(t) do if v==o then return k end end end
+local function getID(o) local t=type(o);return (t=='table') and o.ID or t;end
+
+nwctxt.getID = getID
+nwctxt.tableCOntains = tableContains
 
 function nwctxt.GetClefStdCenterTone(clef) return dict.ClefCenterTones[clef] or dict.ClefCenterTones['Treble'] end
 function nwctxt.GetOffsetAccidental(offset) return dict.Accidentals[tonumber(offset)+3] or "" end
@@ -403,20 +409,24 @@ function nwcItem:WriteUsing(writeFunc)
 	end
 end
 
-function nwcItem:IsFake() return (self.Fake == true) or (self.ObjType == "Context") end
+function nwcItem:IsFake() return (self.Fake == true) or (self.ObjType == 'Context') end
 
-function nwcItem:GetUserType() return (self.ObjType == "User") and self.UserType or false end
-
-function nwcItem:Is(t)
-	return (self.ObjType == t)
+function nwcItem:Is(t,t2)
+	if self.ObjType == t then
+		if t2 and (t=='User') then return self.UserType == t2 end
+		return true
+	end
+	return false
 end
+
+function nwcItem:GetUserType() return self:Is('User') and self.UserType or false end
 
 function nwcItem:IsNoteRestChord()
 	return (dict.NoteObjTypes[self.ObjType] == 1)
 end
 
 function nwcItem:ContainsNotes()
-	return (dict.NoteObjTypes[self.ObjType] == 1) and (self.ObjType ~= "Rest")
+	return (dict.NoteObjTypes[self.ObjType] == 1) and (self.ObjType ~= 'Rest')
 end
 
 function nwcItem:Get(...)
@@ -442,8 +452,8 @@ end
 
 function nwcItem:HasDuration()
 	if (dict.NoteObjTypes[self.ObjType] == 1) then
-		return not hasValue(self:Get("Dur","Grace"))
-	elseif self.ObjType == "RestMultiBar" then 
+		return not hasValue(self:Get('Dur','Grace'))
+	elseif self.ObjType == 'RestMultiBar' then 
 		return true
 	end
 
@@ -451,8 +461,8 @@ function nwcItem:HasDuration()
 end
 
 function nwcItem:AllNotePositions()
-	local p1 = self:Get("Pos")
-	local p2 = self:Get("Pos2")
+	local p1 = self:Get('Pos')
+	local p2 = self:Get('Pos2')
 	local idx = 0
 	if not self:ContainsNotes() then
 		return function() return nil end
@@ -461,7 +471,7 @@ function nwcItem:AllNotePositions()
 			return function() return nil end
 		end
 		p1,p2 = p2,nil
-	elseif p2 and (self:Get('Opts','Stem') == "Up") then
+	elseif p2 and (self:Get('Opts','Stem') == 'Up') then
 		p1,p2 = p2,p1
 	end
 
@@ -584,12 +594,44 @@ function nwcFile:load(items)
 	end
 end
 
-function nwcFile:filterSelection(f)
+function nwcFile:l2rSelection()
+	local e = self.Editor
+	local i1,i2 = e:GetNum('CaretIndex') or 1,e:GetNum('SelectIndex') or 0
+	return (i2>0) and (i2<i1)
+end
+
+function nwcFile:getSelection()
+	local e = self.Editor
+	local staffidx, i1, i2 = e:GetNum('ActiveStaff'),e:GetNum('CaretIndex') or 1,e:GetNum('SelectIndex') or 0
+	local staff = self.Staff[staffidx] or self.Staff[1]
+	if i2 > 0 then i1,i2 = math.min(i1,i2),math.max(i1,i2)-1 end
+	return staff,i1,i2
+end
+
+function nwcFile:setSelection(p1,p2,p3)
+	local e = self.Editor
+	local l2r = self:l2rSelection()
+	local staff,i1,i2 = self:getSelection(),p1,p2 or 0
+	if (getID(p1) == 'nwcStaff') or p3 then
+		if getID(p1) == 'nwcStaff' then p1 = tableContains(self.Staff,p1) end
+		staff = self.Staff[p1]
+		assert(staff,"staff not found")
+		e.Opts.ActiveStaff = p1
+		if p2 then i1,i2 = p2,(p3 or 0) else i1,i2 = 1,#staff+1 end
+	end
+	
+	if i2 < 1 then i2 = i1 end
+	
+	e.Opts.CaretIndex,e.Opts.SelectIndex = parmswap(l2r,i1,i2)
+	if i2 == i1 then e.Opts.SelectIndex = nil end
+end
+
+function nwcFile:forSelection(f)
 	local staff,i1,i2 = self:getSelection()
 	local items,i = staff.Items,i1
-	while i < i2 do
+	while i <= i2 do
 		local o = items[i]
-		local o2 = f(o,self,staff,i)
+		local o2 = f(o,i-i1+1)
 		if type(o2) == 'table' then
 			if o2.ID == 'nwcItem' then
 				items[i],i = o2,i+1
@@ -609,7 +651,7 @@ function nwcFile:filterSelection(f)
 		end
 	end
 
-	self.Editor.Opts.SelectIndex = i2
+	self:setSelection(i1,i2)
 	return self
 end
 
@@ -631,7 +673,7 @@ function nwcFile:save(f)
 		f('!NoteWorthyComposer-End')
 	else
 		f(string.format('!NoteWorthyComposerClip(%s,Single)',nwcut.getprop('HdrVersion')))
-		self:filterSelection(function(o) if not o:IsFake() then f(o) end end)
+		self:forSelection(function(o) if not o:IsFake() then f(o) end end)
 		f('!NoteWorthyComposerClip-End')
 	end
 end
@@ -640,13 +682,6 @@ nwctxt.loadFile = function(items)
 	local score = nwcFile.new()
 	score:load(items)
 	return score
-end
-
-function nwcFile:getSelection()
-	local e = self.Editor
-	local staffidx, i1, i2 = e:GetNum('ActiveStaff'),e:GetNum('CaretIndex') or 1,e:GetNum('SelectIndex') or 0
-	local staff = self.Staff[staffidx] or self.Staff[1]
-	return staff,math.min(i1,i2),math.max(i1,i2)-1
 end
 
 ----------------------------------------------------------------
