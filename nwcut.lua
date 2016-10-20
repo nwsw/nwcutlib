@@ -51,45 +51,50 @@ end
 
 function nwcut.items() return nwcut.getitem end
 
+local function preload()
+	-- Load the stdin stream header data, which makes it available
+	-- to the user tool immediately
+	while ldata.Mode < 1 do
+		local ln = gzreadline()
+		if not ln then error("nwctxt required header not found") end
+
+		local lt = nwcut.ClassifyLine(ln)
+
+		if lt == cd.ltyp_FormatHeader then
+			local i1,i2,m,v = ln:find("^!(%w+)%(([^%,%)]+)")
+
+			ldata.StartingLine = ln
+			ldata.HdrVersion = v or "0"
+
+			if m == "NoteWorthyComposer" then
+				-- File mode
+				ldata.EndingLine = "!NoteWorthyComposer-End"
+				ldata.Mode = 2
+			elseif m == "NoteWorthyComposerClip" then
+				-- Clip mode
+				ldata.EndingLine = "!NoteWorthyComposerClip-End"
+				ldata.Mode = 1
+			end
+		elseif lt == cd.ltyp_Comment then
+			local i1,i2,opt,v = ln:find("^%#%/(%w+)%:%s*(.+)$")
+			if opt == "File" then
+				ldata.FileName = v
+			elseif opt == "SavePending" then
+				ldata.SavePending = (v == "Y")
+			elseif opt == "ReturnFormat" then
+				ldata.ReturnMode = (v == "FileText") and cd.mode_FileText or cd.mode_ClipText
+			end
+		end
+	end
+end
+
 function nwcut.run(usertoolCmd)
 	local vlist = "_VERSION,arg,assert,bit32,error,getmetatable,ipairs,math,next,nwc,nwcItem,nwcNotePos,nwcNotePosList,nwcOptGroup,nwcOptList,nwcOptText,nwcPlayContext,nwcut,pairs,pcall,print,select,setmetatable,string,utf8string,StringBuilder,table,tonumber,tostring,type"
 	local SandboxEnv = {}
+	
+	preload()
+	
 	for o in vlist:gmatch("[^,]+") do SandboxEnv[o] = _ENV[o] end
 
 	assert(loadfile(usertoolCmd,"t",SandboxEnv))()
-end
-
--- Load the stdin stream header data, which makes it available
--- to the user tool immediately
-while ldata.Mode < 1 do
-	local ln = gzreadline()
-	if not ln then error("nwctxt required header not found") end
-
-	local lt = nwcut.ClassifyLine(ln)
-
-	if lt == cd.ltyp_FormatHeader then
-		local i1,i2,m,v = ln:find("^!(%w+)%(([^%,%)]+)")
-
-		ldata.StartingLine = ln
-		ldata.HdrVersion = v or "0"
-
-		if m == "NoteWorthyComposer" then
-			-- File mode
-			ldata.EndingLine = "!NoteWorthyComposer-End"
-			ldata.Mode = 2
-		elseif m == "NoteWorthyComposerClip" then
-			-- Clip mode
-			ldata.EndingLine = "!NoteWorthyComposerClip-End"
-			ldata.Mode = 1
-		end
-	elseif lt == cd.ltyp_Comment then
-		local i1,i2,opt,v = ln:find("^%#%/(%w+)%:%s*(.+)$")
-		if opt == "File" then
-			ldata.FileName = v
-		elseif opt == "SavePending" then
-			ldata.SavePending = (v == "Y")
-		elseif opt == "ReturnFormat" then
-			ldata.ReturnMode = (v == "FileText") and cd.mode_FileText or cd.mode_ClipText
-		end
-	end
 end

@@ -620,10 +620,12 @@ function nwcFile:setSelection(p1,p2,p3)
 		if p2 then i1,i2 = p2,(p3 or 0) else i1,i2 = 1,#staff+1 end
 	end
 	
-	if i2 < 1 then i2 = i1 end
-	
-	e.Opts.CaretIndex,e.Opts.SelectIndex = parmswap(l2r,i1,i2)
-	if i2 == i1 then e.Opts.SelectIndex = nil end
+	if i2 >= i1 then
+		e.Opts.CaretIndex,e.Opts.SelectIndex = parmswap(l2r,i1,i2+1)
+	else
+		e.Opts.CaretIndex = i1
+		e.Opts.SelectIndex = nil
+	end
 end
 
 function nwcFile:forSelection(f)
