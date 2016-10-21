@@ -71,15 +71,12 @@ nwc.txt = {
 
 gzreadline = io.lines()
 
-local function locktables()
-	-- protect the `nwc` tables...this just simulated the behavior in the true env
-	for k,v in pairs(nwc.txt) do nwc.txt[k] = nwctxt.ProtectTable(v) end
-	nwc.txt = nwctxt.ProtectTable(nwc.txt)
-	nwc = nwctxt.ProtectTable(txt)
-end
-
-dofile('nwctxt.lua')
-locktables()
 dofile('nwcut.lua')
+
+-- protect the `nwc` tables...this just simulated the behavior in the true env
+for k,v in pairs(nwc.txt) do nwc.txt[k] = nwctxt.ProtectTable(v) end
+nwc.txt = nwctxt.ProtectTable(nwc.txt)
+nwc = nwctxt.ProtectTable(txt)
+
 dofile('shim.lua')
 dofile('sandbox.lua')
