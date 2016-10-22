@@ -2,6 +2,15 @@
 -- This file has no role in the true `nwcut` environment, but you can
 -- use it to better understand the true environment.
 
+local fakeInput = [[
+!NoteWorthyComposerClip(2.75,Single)
+|Note|Dur:4th|Pos:0
+!NoteWorthyComposerClip-End
+]]
+
+-- nwc.exe provides a `gzreadline` global function for loading stdin; we fake it here
+gzreadline = fakeInput:gmatch("([^\r\n]*)")
+
 -- utf8string = require('lua-utf8')
 utf8string = string
 
@@ -69,14 +78,15 @@ nwc.txt = {
 	MarkerTargets	= {'Articulation','Slur','Triplet'},
 }
 
-gzreadline = io.lines()
-
 dofile('nwcut.lua')
 
 -- protect the `nwc` tables...this just simulated the behavior in the true env
-for k,v in pairs(nwc.txt) do nwc.txt[k] = nwctxt.ProtectTable(v) end
-nwc.txt = nwctxt.ProtectTable(nwc.txt)
-nwc = nwctxt.ProtectTable(txt)
+for k,v in pairs(nwc.txt) do nwc.txt[k] = nwcut.ProtectTable(v) end
+nwc.txt = nwcut.ProtectTable(nwc.txt)
+nwc = nwcut.ProtectTable(nwc)
 
-dofile('shim.lua')
-dofile('sandbox.lua')
+if arg[1] then
+	nwcut.run(arg[1])
+else
+	nwcut.warn('Warning: user tool script should be passed as first argument')
+end
