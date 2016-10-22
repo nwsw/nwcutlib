@@ -1,6 +1,7 @@
 -- Establish the NoteWorthy Composer user tool support classes
 
-local nwctxt = {ID='nwcut'}
+nwcut.ID='nwcut'
+
 local StringBuilder = {ID='StringBuilder'}
 local nwcOptList = {ID='nwcOptList'}
 local nwcOptText = {ID='nwcOptText'}
@@ -12,6 +13,11 @@ local nwcStaff = {ID='nwcStaff'}
 local nwcFile = {ID='nwcFile'}
 local nwcPlayContext = {ID='nwcPlayContext'}
 
+-- some local data cannot be initialized until all classes are fully defined
+local initProcs = setmetatable({},{__index=table})
+
+initProcs:insert(function() nwcut = setmetatable({},{__index=nwcut}) end)
+
 local function ProtectTable(tbl) return setmetatable({},{
 	__index = tbl,
 	__newindex = function (t, n, v) error("constant change "..tostring(n).." to "..tostring (v), 2)  end,
@@ -19,9 +25,22 @@ local function ProtectTable(tbl) return setmetatable({},{
 	})
 end
 
-nwctxt.ProtectTable = ProtectTable
+local function typeOf(o) local t=type(o) return (t=='table') and o.ID or t end
+local function hasValue(v) return (v and (v ~= "")) or false end
+local function parmswap(swap,v1,v2) if swap then return v2,v1 else return v1,v2 end end
+local function copyKeySig(dest,src)	for k,v in pairs(src) do dest[k] = v end end
+local function ripairs(t) local function r2(t,i) i=i-1;if t[i]~=nil then return i,t[i] end end return r2, t, #t+1 end
+local function mergeItem(o1,o2)	for k,v in pairs(o2.Opts) do o1.Opts[k] = v end end
+local function tableContains(t,o) for k,v in pairs(t) do if v==o then return k end end end
+local function iterlistvals(t) local i=0;return function() i=i+1;if t[i] then return t[i] end;end;end
 
-nwctxt.const = ProtectTable({
+nwcut.ProtectTable = ProtectTable
+nwcut.typeOf = typeOf
+nwcut.write=io.write
+nwcut.stderr=io.stderr
+nwcut.warn=function(...) nwcut.stderr:write(...) end
+
+nwcut.const = ProtectTable({
 	-- Possible processing modes
 	mode_ClipText = 1,
 	mode_FileText = 2,
@@ -63,26 +82,231 @@ local dict = {
 	ClefCenterTones = {Treble=34,Bass=22,Alto=28,Tenor=26,Drum=22},
 	}
 
-local cd=nwctxt.const
+local cd=nwcut.const
 
-local function hasValue(v) return (v and (v ~= "")) or false end
-local function parmswap(swap,v1,v2) if swap then return v2,v1 else return v1,v2 end end
-local function CopyKeySig(dest,src)	for k,v in pairs(src) do dest[k] = v end end
-local function ripairs(t) local function r2(t,i) i=i-1;if t[i]~=nil then return i,t[i] end end return r2, t, #t+1 end
-local function mergeItem(o1,o2)	for k,v in pairs(o2.Opts) do o1.Opts[k] = v end end
-local function tableContains(t,o) for k,v in pairs(t) do if v==o then return k end end end
-local function getID(o) local t=type(o);return (t=='table') and o.ID or t;end
+local ldata={
+	FileName=false,
+	SavePending=false,
+	StartingLine=nil,
+	EndingLine=false,
+	HdrVersion=nil,
+	Mode=0,
+	ReturnMode=cd.mode_ClipText,
+	ItemsRetrieved=0
+}
 
-nwctxt.getID = getID
-nwctxt.tableCOntains = tableContains
+function nwcut.GetClefStdCenterTone(clef) return dict.ClefCenterTones[clef] or dict.ClefCenterTones['Treble'] end
+function nwcut.GetOffsetAccidental(offset) return dict.Accidentals[tonumber(offset)+3] or "" end
+function nwcut.GetAccidentalOffset(acc) return dict.AccidentalOffsets[acc] or 0 end
 
-function nwctxt.GetClefStdCenterTone(clef) return dict.ClefCenterTones[clef] or dict.ClefCenterTones['Treble'] end
-function nwctxt.GetOffsetAccidental(offset) return dict.Accidentals[tonumber(offset)+3] or "" end
-function nwctxt.GetAccidentalOffset(acc) return dict.AccidentalOffsets[acc] or 0 end
+function nwcut.AllNoteNames() return iterlistvals(dict.NoteNames) end
+function nwcut.AllAccidentals() return iterlistvals(dict.Accidentals) end
 
-local function iterlistvals(t) local i=0;return function() i=i+1;if t[i] then return t[i] end;end;end
-function nwctxt.AllNoteNames() return iterlistvals(dict.NoteNames) end
-function nwctxt.AllAccidentals() return iterlistvals(dict.Accidentals) end
+function nwcut.getprop(s)
+	if s == "ItemLevel" then return nwcItem.DefaultLevel end
+	return ldata[s]
+end
+
+function nwcut.setlevel(lvl) nwcItem.SetDefaultLevel(lvl) end
+
+function nwcut.writeline(...)
+	local a = {...}
+	local w = nwcut.write
+	for _,v in ipairs(a) do
+		local t = type(v)
+		if (t == "string") or (t == "number") then
+			w(v)
+		elseif (t == "table") and v.WriteUsing then
+			v:WriteUsing(w)
+		else
+			w(tostring(v))
+		end
+	end
+
+	w("\n")
+end
+
+function nwcut.preload()
+	-- Load the stdin stream header data, which makes it available
+	-- to the user tool immediately
+	while ldata.Mode < 1 do
+		local ln = gzreadline()
+		if not ln then error("nwctxt required header not found") end
+
+		local lt = nwcut.ClassifyLine(ln)
+
+		if lt == cd.ltyp_FormatHeader then
+			local i1,i2,m,v = ln:find("^!(%w+)%(([^%,%)]+)")
+
+			ldata.StartingLine = ln
+			ldata.HdrVersion = v or "0"
+
+			if m == "NoteWorthyComposer" then
+				-- File mode
+				ldata.EndingLine = "!NoteWorthyComposer-End"
+				ldata.Mode = 2
+			elseif m == "NoteWorthyComposerClip" then
+				-- Clip mode
+				ldata.EndingLine = "!NoteWorthyComposerClip-End"
+				ldata.Mode = 1
+			end
+		elseif lt == cd.ltyp_Comment then
+			local i1,i2,opt,v = ln:find("^%#%/(%w+)%:%s*(.+)$")
+			if opt == "File" then
+				ldata.FileName = v
+			elseif opt == "SavePending" then
+				ldata.SavePending = (v == "Y")
+			elseif opt == "ReturnFormat" then
+				ldata.ReturnMode = (v == "FileText") and cd.mode_FileText or cd.mode_ClipText
+			end
+		end
+	end
+end
+
+function nwcut.getitem()
+	while true do
+		local ln = gzreadline()
+		if not ln then return nil end
+
+		local lt = nwcut.ClassifyLine(ln)
+		if lt == cd.ltyp_Object then
+			ldata.ItemsRetrieved = ldata.ItemsRetrieved+1
+			return nwcItem.new(ln)
+		elseif lt == cd.ltyp_FormatHeader then
+			while gzreadline() do end
+			return nil
+		end
+	end
+end
+
+function nwcut.items() return nwcut.getitem end
+
+function nwcut.loadFile(items)
+	local score = nwcFile.new()
+	score:load(items)
+	return score
+end
+
+local ltyp_D = {[0x21]=1,[0x23]=2,[0x7c]=3}
+--
+function nwcut.ClassifyLine(ln)
+	local fc = string.byte(ln,1)
+	if fc == nil
+		then return cd.ltyp_Comment
+	else
+		return ltyp_D[fc] or cd.ltyp_Error
+	end
+end
+
+function nwcut.objtyp(s)
+	local _,_,objt = string.find(s,"^|(%w+)")
+	return objt
+end
+
+local ObjTyp_D = {
+	Note=1,Chord=1,Bar=1,Rest=1,Text=1,Dynamic=1,Clef=1,Key=1,TimeSig=1,
+	Locale=3,Editor=3,SongInfo=3,PgSetup=3,Font=3,PgMargins=3,
+	AddStaff=2,StaffProperties=2,StaffInstrument=2
+	}
+
+function nwcut.ClassifyObjType(ObjType)
+	if not ObjType then return cd.objtyp_Error end
+
+	local otc = ObjTyp_D[ObjType]
+	if otc == 1 then
+		return cd.objtyp_StaffNotation
+	elseif otc == 2 then
+		return cd.objtyp_StaffProperty
+	elseif otc == 3 then
+		return cd.objtyp_FileProperty
+	elseif ObjType:find("^Lyric") then
+		return cd.objtyp_StaffLyric
+	end
+
+	return cd.objtyp_StaffNotation
+end
+
+local OptTag_D = {
+	Visibility=false,Color=false,
+	Opts=1,Dur=1,Dur2=1,Endings=1,
+	Pos=2,Pos2=2,
+	Text=3,Name=3,Label=3,Group=3,Typeface=3,
+	DynVel=4,WithNextStaff=4,WhenHidden=4,
+	Signature=5,
+	Bar=6,
+	BracketHeight=7,BracketOffsetNP=7,Color=7,Lower=7,NumBars=7,Pause=7,Repeat=7,StemLength=7,SweepRes=7,Tempo=7,Trans=7,Upper=7,VertOffset=7,Width=7,XAccSpace=7,XNoteSpace=7,
+}
+
+function nwcut.ClassifyOptTag(ObjType,Tag)
+	-- The OptTag_D dictionary is optimized for speed
+	local c = OptTag_D[Tag]
+
+	if not c then
+		-- Tag is Visibility,Color or unlisted
+		return cd.opt_Raw
+	elseif ObjType == "User" then
+		return (Tag == "Pos") and cd.opt_Num or cd.opt_Raw
+	elseif c == 1 then
+		-- Tag is Opts,Dur,Dur2,Endings
+		return cd.opt_Associative
+	elseif c == 2 then
+		-- Tag is Pos,Pos2
+		if dict.NoteObjTypes[ObjType] then return cd.opt_NotePos end
+		return cd.opt_Num
+	elseif c == 3 or (ObjType == "SongInfo") then
+		-- Tag is Text,Name,Label,Group,Typeface
+		return cd.opt_Text
+	elseif c == 4 then
+		-- Tag is DynVel,WithNextStaff,WhenHidden
+		return cd.opt_List
+	elseif c == 5 then
+		-- Tag is Signature
+		if ObjType == "Key" then return cd.opt_Associative end
+	elseif c == 6 then
+		-- Tag is Bar
+		if ObjType == "Context" then return cd.opt_List end
+	elseif c == 7 then
+		return cd.opt_Num
+	end
+
+	return cd.opt_Raw
+end
+
+local function retstr(s) return tostring(s) end
+local function retnum(n) return tonumber(n) or tostring(n) end
+--
+local OptCapture_D
+initProcs:insert(function() OptCapture_D = {
+	[cd.opt_Raw] = retstr,
+	[cd.opt_Num] = retnum,
+	[cd.opt_Text] = nwcOptText.new,
+	[cd.opt_List] = nwcOptList.new,
+	[cd.opt_Associative] = nwcOptGroup.new,
+	[cd.opt_NotePos] = nwcNotePosList.new
+} end)
+--
+function nwcut.CaptureOptData(Level,ObjType,Tag,Data)
+	local c = cd.opt_Raw
+	if Level > 1 then c = nwcut.ClassifyOptTag(ObjType,Tag) end
+	return OptCapture_D[c](tostring(Data))
+end
+
+function nwcut.buildEnv() return {
+	nwc=nwc,nwcut=nwcut,StringBuilder=StringBuilder,
+	nwcFile=nwcFile,nwcStaff=nwcStaff,nwcItem=nwcItem,nwcNotePos=nwcNotePos,nwcNotePosList=nwcNotePosList,
+	nwcOptGroup=nwcOptGroup,nwcOptList=nwcOptList,nwcOptText=nwcOptText,nwcPlayContext=nwcPlayContext,
+	}
+end
+
+function nwcut.run(usertoolCmd)
+	local vlist = [[_VERSION,arg,assert,bit32,error,getmetatable,ipairs,math,next,pairs,pcall,print,select,setmetatable,string,utf8string,table,tonumber,tostring,type]]
+	local SandboxEnv = nwcut.buildEnv()
+	for o in vlist:gmatch("[%w_]+") do SandboxEnv[o] = _ENV[o] end
+	
+	nwcut.preload()
+
+	assert(loadfile(usertoolCmd,"t",SandboxEnv))()
+end
 
 -------------------------------------
 StringBuilder.__index = StringBuilder
@@ -159,13 +383,7 @@ end
 
 function nwcOptList:__tostring() return self:concat(',') end
 
-function nwcOptList:Find(a) 
-	for k,v in ipairs(self) do
-		if (v == a) then return k end
-	end
-	return nil
-end
-
+function nwcOptList:Find(a) return tableContains(self,a) end
 
 ------------------------------
 nwcOptGroup.__index = nwcOptGroup
@@ -222,7 +440,7 @@ function nwcNotePos:GetAccidentalPitchOffset()
 end
 
 function nwcNotePos:GetNoteName(clef)
-	local n = math.fmod(nwctxt.GetClefStdCenterTone(clef) + self.Position, 7)
+	local n = math.fmod(nwcut.GetClefStdCenterTone(clef) + self.Position, 7)
 	return dict.NoteNames[(n < 0) and (n+8) or (n+1)]
 end
 
@@ -250,110 +468,6 @@ function nwcNotePosList:WriteUsing(writeFunc)
 end
 
 ----------------------------------------------------------------
-local ltyp_D = {[0x21]=1,[0x23]=2,[0x7c]=3}
-
-function nwctxt.ClassifyLine(ln)
-	local fc = string.byte(ln,1)
-	if fc == nil
-		then return cd.ltyp_Comment
-	else
-		return ltyp_D[fc] or cd.ltyp_Error
-	end
-end
-
-function nwctxt.objtyp(s)
-	local _,_,objt = string.find(s,"^|(%w+)")
-	return objt
-end
-
-local ObjTyp_D = {
-	Note=1,Chord=1,Bar=1,Rest=1,Text=1,Dynamic=1,Clef=1,Key=1,TimeSig=1,
-	Locale=3,Editor=3,SongInfo=3,PgSetup=3,Font=3,PgMargins=3,
-	AddStaff=2,StaffProperties=2,StaffInstrument=2
-	}
-
-function nwctxt.ClassifyObjType(ObjType)
-	if not ObjType then return cd.objtyp_Error end
-
-	local otc = ObjTyp_D[ObjType]
-	if otc == 1 then
-		return cd.objtyp_StaffNotation
-	elseif otc == 2 then
-		return cd.objtyp_StaffProperty
-	elseif otc == 3 then
-		return cd.objtyp_FileProperty
-	elseif ObjType:find("^Lyric") then
-		return cd.objtyp_StaffLyric
-	end
-
-	return cd.objtyp_StaffNotation
-end
-
-local OptTag_D = {
-	Visibility=false,Color=false,
-	Opts=1,Dur=1,Dur2=1,Endings=1,
-	Pos=2,Pos2=2,
-	Text=3,Name=3,Label=3,Group=3,Typeface=3,
-	DynVel=4,WithNextStaff=4,WhenHidden=4,
-	Signature=5,
-	Bar=6,
-	BracketHeight=7,BracketOffsetNP=7,Color=7,Lower=7,NumBars=7,Pause=7,Repeat=7,StemLength=7,SweepRes=7,Tempo=7,Trans=7,Upper=7,VertOffset=7,Width=7,XAccSpace=7,XNoteSpace=7,
-	}
-
-function nwctxt.ClassifyOptTag(ObjType,Tag)
-	-- The OptTag_D dictionary is optimized for speed
-	local c = OptTag_D[Tag]
-
-	if not c then
-		-- Tag is Visibility,Color or unlisted
-		return cd.opt_Raw
-	elseif ObjType == "User" then
-		return (Tag == "Pos") and cd.opt_Num or cd.opt_Raw
-	elseif c == 1 then
-		-- Tag is Opts,Dur,Dur2,Endings
-		return cd.opt_Associative
-	elseif c == 2 then
-		-- Tag is Pos,Pos2
-		if dict.NoteObjTypes[ObjType] then return cd.opt_NotePos end
-		return cd.opt_Num
-	elseif c == 3 or (ObjType == "SongInfo") then
-		-- Tag is Text,Name,Label,Group,Typeface
-		return cd.opt_Text
-	elseif c == 4 then
-		-- Tag is DynVel,WithNextStaff,WhenHidden
-		return cd.opt_List
-	elseif c == 5 then
-		-- Tag is Signature
-		if ObjType == "Key" then return cd.opt_Associative end
-	elseif c == 6 then
-		-- Tag is Bar
-		if ObjType == "Context" then return cd.opt_List end
-	elseif c == 7 then
-		return cd.opt_Num
-	end
-
-	return cd.opt_Raw
-end
-
-local function retstr(s) return tostring(s) end
-local function retnum(n) return tonumber(n) or tostring(n) end
-
-local OptCapture_D = {
-	[cd.opt_Raw] = retstr,
-	[cd.opt_Num] = retnum,
-	[cd.opt_Text] = nwcOptText.new,
-	[cd.opt_List] = nwcOptList.new,
-	[cd.opt_Associative] = nwcOptGroup.new,
-	[cd.opt_NotePos] = nwcNotePosList.new
-	}
---
-function nwctxt.CaptureOptData(Level,ObjType,Tag,Data)
-	local c = cd.opt_Raw
-	if Level > 1 then c = nwctxt.ClassifyOptTag(ObjType,Tag) end
-	return OptCapture_D[c](tostring(Data))
-end
-
-----------------------------------------------------------------
 nwcItem.__index = nwcItem
 nwcItem.__tostring = StringBuilder.Writer
 
@@ -369,7 +483,7 @@ function nwcItem.new(cliptext,level)
 	local UserType = nil
 	local Opts = {}
 	local isFake = false
-	local doCapture = nwctxt.CaptureOptData
+	local doCapture = nwcut.CaptureOptData
 
 	for sep,fld in cliptext:gmatch("([|%s]+)([^|]+)") do
 		if not ObjType then
@@ -451,7 +565,7 @@ end
 function nwcItem:GetNum(...) return tonumber(self:Get(...)) end
 
 function nwcItem:Set(lbl,data)
-	self.Opts[lbl] = nwctxt.CaptureOptData(self.Level,self.ObjType,lbl,data or "")
+	self.Opts[lbl] = nwcut.CaptureOptData(self.Level,self.ObjType,lbl,data or "")
 end
 
 function nwcItem:Provide(lbl,data)
@@ -511,8 +625,6 @@ function nwcStaff.new()
 	setmetatable(o,nwcStaff)
 	return o
 end
-
-nwctxt.nwcStaff = nwcStaff.new
 
 function nwcStaff:add(item)
 	local c = nwcut.ClassifyObjType(item.ObjType)
@@ -601,12 +713,6 @@ function nwcFile:load(items)
 	end
 end
 
-function nwcFile:l2rSelection()
-	local e = self.Editor
-	local i1,i2 = e:GetNum('CaretIndex') or 1,e:GetNum('SelectIndex') or 0
-	return (i2>0) and (i2<i1)
-end
-
 function nwcFile:getSelection()
 	local e = self.Editor
 	local staffidx, i1, i2 = e:GetNum('ActiveStaff'),e:GetNum('CaretIndex') or 1,e:GetNum('SelectIndex') or 0
@@ -615,16 +721,21 @@ function nwcFile:getSelection()
 	return staff,i1,i2
 end
 
+local function l2rSelection(e)
+	local i1,i2 = e:GetNum('CaretIndex') or 1,e:GetNum('SelectIndex') or 0
+	return (i2>0) and (i2<i1)
+end
+--
 function nwcFile:setSelection(p1,p2,p3)
 	local e = self.Editor
-	local l2r = self:l2rSelection()
+	local l2r = l2rSelection(self.Editor)
 	local staff,i1,i2 = self:getSelection(),p1,p2 or 0
-	if (getID(p1) == 'nwcStaff') or p3 then
-		if getID(p1) == 'nwcStaff' then p1 = tableContains(self.Staff,p1) end
+	if (typeOf(p1) == 'nwcStaff') or p3 then
+		if typeOf(p1) == 'nwcStaff' then p1 = tableContains(self.Staff,p1) end
 		staff = self.Staff[p1]
 		assert(staff,"staff not found")
 		e.Opts.ActiveStaff = p1
-		if p2 then i1,i2 = p2,(p3 or 0) else i1,i2 = 1,#staff+1 end
+		if p2 then i1,i2 = p2,(p3 or 0) else i1,i2 = 1,#staff.Items end
 	end
 	
 	if i2 >= i1 then
@@ -640,17 +751,17 @@ function nwcFile:forSelection(f)
 	local items,i = staff.Items,i1
 	while i <= i2 do
 		local o = items[i]
+		if not o then break end
 		local o2 = f(o,i-i1+1)
-		if type(o2) == 'table' then
-			if o2.ID == 'nwcItem' then
-				items[i],i = o2,i+1
-			else
-				table.remove(items,i)
-				i2 = i2 - 1
-				for _,v in ipairs(o2) do
-					table.insert(items,i,v)
-					i,i2 = i+1,i2+1
-				end
+		local tid = typeOf(o2)
+		if tid == 'nwcItem' then
+			items[i],i = o2,i+1
+		elseif tid == 'table' then
+			table.remove(items,i)
+			i2 = i2 - 1
+			for _,v in ipairs(o2) do
+				table.insert(items,i,v)
+				i,i2 = i+1,i2+1
 			end
 		elseif o2 == 'delete' then
 			table.remove(items,i)
@@ -685,12 +796,6 @@ function nwcFile:save(f)
 		self:forSelection(function(o) if not o:IsFake() then f(o) end end)
 		f('!NoteWorthyComposerClip-End')
 	end
-end
-
-nwctxt.loadFile = function(items)
-	local score = nwcFile.new()
-	score:load(items)
-	return score
 end
 
 ----------------------------------------------------------------
@@ -746,11 +851,11 @@ function nwcPlayContext:GetNoteAccidental(notepitchObj)
 	end
 		
 	local n = notepitchObj:GetNoteName(self.Clef)
-	return nwctxt.GetOffsetAccidental(self.RunKey[n])
+	return nwcut.GetOffsetAccidental(self.RunKey[n])
 end
 
 function nwcPlayContext:GetScientificPitchOctave(notepitchObj)
-	return math.floor((nwctxt.GetClefStdCenterTone(self.Clef) + notepitchObj.Position) / #dict.NoteNames) + self:GetOctaveShift()
+	return math.floor((nwcut.GetClefStdCenterTone(self.Clef) + notepitchObj.Position) / #dict.NoteNames) + self:GetOctaveShift()
 end
 
 function nwcPlayContext:GetNoteMidiPitch(notepitchObj)
@@ -769,7 +874,7 @@ function nwcPlayContext:GetNoteMidiPitch(notepitchObj)
 end
 
 function nwcPlayContext:FindTieIndex(o)
-	local accPos = (o.ID == "nwcNotePos") and string.format("%s%d",self:GetNoteAccidental(o),o.Position) or tostring(o)
+	local accPos = (typeOf(o) == "nwcNotePos") and string.format("%s%d",self:GetNoteAccidental(o),o.Position) or tostring(o)
 
 	for i,v in ripairs(self.Ties) do
 		if v == accPos then return i end
@@ -797,7 +902,7 @@ function nwcPlayContext:put(o)
 
 	if (dict.NoteObjTypes[o.ObjType] == 1) then
 		local RunKey_Changes = {}
-		CopyKeySig(RunKey_Changes,self.RunKey)
+		copyKeySig(RunKey_Changes,self.RunKey)
 
 		for notepitchObj in o:AllNotePositions() do
 			local notename = notepitchObj:GetNoteName(self.Clef)
@@ -818,7 +923,7 @@ function nwcPlayContext:put(o)
 			end
 		end
 
-		CopyKeySig(self.RunKey,RunKey_Changes)
+		copyKeySig(self.RunKey,RunKey_Changes)
 
 		if (not hasValue(o:Get("Dur","Grace"))) then
 			self.Slur = hasValue(o:Get("Dur","Slur"))
@@ -836,7 +941,7 @@ function nwcPlayContext:put(o)
 			if (not self.PendingBarIncrement) then self.NextBarNum = self.NextBarNum + 1 end
 		end
 	elseif (o.ObjType == "Bar") then
-		CopyKeySig(self.RunKey,self.Key)
+		copyKeySig(self.RunKey,self.Key)
 		if (o:Get("Style") == "MasterRepeatOpen") then self.SeenFirstEnding = false end
 		self.PendingBarIncrement = (o:Get("XBarCnt") ~= "Y")
 	elseif (o.ObjType == "RestMultiBar") then
@@ -859,7 +964,7 @@ function nwcPlayContext:put(o)
 			end
 		end
 
-		CopyKeySig(self.RunKey,self.Key)
+		copyKeySig(self.RunKey,self.Key)
 		self.KeyTonic = o:Get("Tonic") or "C"
 	elseif (o.ObjType == "Instrument") then
 		self.Transposition = tonumber(o:Get("Trans") or 0)
@@ -880,108 +985,5 @@ function nwcPlayContext:put(o)
 	return o
 end
 
-----------------------------------------------------------------
--- inherit everything from the nwctxt class
-setmetatable(nwcut,{__index=nwctxt})
-
-nwcut.write=io.write
-nwcut.stderr=io.stderr
-nwcut.warn=function(...) nwcut.stderr:write(...) end
-
-local cd=nwctxt.const
-local ldata={FileName=false,SavePending=false,StartingLine=nil,EndingLine=false,HdrVersion=nil,Mode=0,ReturnMode=cd.mode_ClipText,ItemsRetrieved=0}
-function nwcut.getprop(s)
-	if s == "ItemLevel" then return nwcItem.DefaultLevel end
-	return ldata[s]
-end
-
-nwcut.setlevel = nwcItem.SetDefaultLevel
-
-function nwcut.writeline(...)
-	local a = {...}
-	local w = nwcut.write
-	for _,v in ipairs(a) do
-		local t = type(v)
-		if (t == "string") or (t == "number") then
-			w(v)
-		elseif (t == "table") and v.WriteUsing then
-			v:WriteUsing(w)
-		else
-			w(tostring(v))
-		end
-	end
-
-	w("\n")
-end
-
-function nwcut.preload()
-	-- Load the stdin stream header data, which makes it available
-	-- to the user tool immediately
-	while ldata.Mode < 1 do
-		local ln = gzreadline()
-		if not ln then error("nwctxt required header not found") end
-
-		local lt = nwcut.ClassifyLine(ln)
-
-		if lt == cd.ltyp_FormatHeader then
-			local i1,i2,m,v = ln:find("^!(%w+)%(([^%,%)]+)")
-
-			ldata.StartingLine = ln
-			ldata.HdrVersion = v or "0"
-
-			if m == "NoteWorthyComposer" then
-				-- File mode
-				ldata.EndingLine = "!NoteWorthyComposer-End"
-				ldata.Mode = 2
-			elseif m == "NoteWorthyComposerClip" then
-				-- Clip mode
-				ldata.EndingLine = "!NoteWorthyComposerClip-End"
-				ldata.Mode = 1
-			end
-		elseif lt == cd.ltyp_Comment then
-			local i1,i2,opt,v = ln:find("^%#%/(%w+)%:%s*(.+)$")
-			if opt == "File" then
-				ldata.FileName = v
-			elseif opt == "SavePending" then
-				ldata.SavePending = (v == "Y")
-			elseif opt == "ReturnFormat" then
-				ldata.ReturnMode = (v == "FileText") and cd.mode_FileText or cd.mode_ClipText
-			end
-		end
-	end
-end
-
-function nwcut.getitem()
-	while true do
-		local ln = gzreadline()
-		if not ln then return nil end
-
-		local lt = nwcut.ClassifyLine(ln)
-		if lt == cd.ltyp_Object then
-			ldata.ItemsRetrieved = ldata.ItemsRetrieved+1
-			return nwcItem.new(ln)
-		elseif lt == cd.ltyp_FormatHeader then
-			while gzreadline() do end
-			return nil
-		end
-	end
-end
-
-function nwcut.items() return nwcut.getitem end
-
-function nwcut.buildEnv() return {
-	nwc=nwc,nwcut=nwcut,StringBuilder=StringBuilder,
-	nwcFile=nwcFile,nwcStaff=nwcStaff,nwcItem=nwcItem,nwcNotePos=nwcNotePos,nwcNotePosList=nwcNotePosList,
-	nwcOptGroup=nwcOptGroup,nwcOptList=nwcOptList,nwcOptText=nwcOptText,nwcPlayContext=nwcPlayContext,
-	}
-end
-
-function nwcut.run(usertoolCmd)
-	local vlist = [[_VERSION,arg,assert,bit32,error,getmetatable,ipairs,math,next,pairs,pcall,print,select,setmetatable,string,utf8string,table,tonumber,tostring,type]]
-	local SandboxEnv = nwcut.buildEnv()
-	for o in vlist:gmatch("[%w_]+") do SandboxEnv[o] = _ENV[o] end
-	
-	nwcut.preload()
-
-	assert(loadfile(usertoolCmd,"t",SandboxEnv))()
-end
+---------------------------------------
+for _,f in ipairs(initProcs) do f() end
