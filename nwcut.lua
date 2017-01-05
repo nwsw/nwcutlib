@@ -418,12 +418,13 @@ nwcNotePos.__tostring = StringBuilder.Writer
 
 function nwcNotePos.new(s)
 	local a = {Position=0}
-	local Accidental, Position, Notehead, Tied, Color = s:match("([#bnxv]?)(-?%d+)(%a?)(^?)!?(%d?)")
+	local Accidental, Position, Notehead, Tied, Color, CourtesyAcc = s:match("([#bnxv]?)(-?%d+)(%a?)(^?)!?(%d?)(%)?)")
 	if Accidental ~= "" then a.Accidental = Accidental end
 	if Position ~= "" then a.Position = tonumber(Position) end
 	if Notehead ~= "" then a.Notehead = Notehead end
 	if Tied == "^" then a.Tied = true end
 	if Color ~= "" then a.Color = tonumber(Color) end
+	if CourtesyAcc == ")" then a.CourtesyAcc = true end
 	return setmetatable(a,nwcNotePos)
 end
 
@@ -433,6 +434,7 @@ function nwcNotePos:WriteUsing(writeFunc)
 	if self.Notehead then writeFunc(self.Notehead) end
 	if self.Tied then writeFunc("^") end
 	if self.Color and (tonumber(self.Color) > 0) then  writeFunc("!",self.Color) end
+	if self.CourtesyAcc then writeFunc(")") end
 end
 
 function nwcNotePos:GetAccidentalPitchOffset()
@@ -569,7 +571,7 @@ function nwcItem:Set(lbl,data)
 end
 
 function nwcItem:Provide(lbl,data)
-	if not self.Opts[lbl] then Set(lbl,data) end
+	if not self.Opts[lbl] then self:Set(lbl,data) end
 	return self.Opts[lbl]
 end
 
@@ -752,7 +754,7 @@ function nwcFile:forSelection(f)
 	while i <= i2 do
 		local o = items[i]
 		if not o then break end
-		local o2 = f(o,i-i1+1)
+		local o2 = f(o,i-i1+1,i==i2)
 		local tid = typeOf(o2)
 		if tid == 'nwcItem' then
 			items[i],i = o2,i+1
