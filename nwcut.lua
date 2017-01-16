@@ -392,9 +392,9 @@ nwcOptGroup.__tostring = StringBuilder.Writer
 function nwcOptGroup.new(s)
 	local a = {}
 	setmetatable(a,nwcOptGroup)
-	for o in s:gmatch("[^,]+") do
-		local m1,m2 = o:match("^([^%=]+)%=(.*)$")
-		a[m1 or o] = m2 or ""
+	for o in s:gmatch('[^,]+') do
+		local m1,m2 = o:match('^([^%=]+)%=(.*)$')
+		a[m1 or o] = m2 or ''
 	end
 	return a
 end
@@ -575,8 +575,37 @@ function nwcItem:Provide(lbl,data)
 	return self.Opts[lbl]
 end
 
+local function sanitizeDur(v)
+	if not v then return 'Dur'
+	elseif v == 1 then return 'Dur'
+	elseif v == 2 then return 'Dur2'
+	end
+	return v
+end
+
+function nwcItem:NoteDurBase(v)
+	if not self:IsNoteRestChord() then return nil end
+	v = sanitizeDur(v)
+	local tDur = self:Get(v)
+	if not tDur then return (v ~= 'Dur2') and '4th' or nil end
+	for _,k in ipairs(nwc.txt.NoteDurBase) do
+		if tDur[k] then return k end
+	end
+	return '4th'
+end
+
+function nwcItem:NoteDots(v)
+	v = sanitizeDur(v)
+	local tDur = self:Get(v)
+	if not tDur then return 0
+	elseif tDur.DblDotted then return 2
+	elseif tDur.Dotted then return 1
+	end
+	return 0
+end
+
 function nwcItem:HasDuration()
-	if (dict.NoteObjTypes[self.ObjType] == 1) then
+	if self:NoteDurBase() then
 		return not hasValue(self:Get('Dur','Grace'))
 	elseif self.ObjType == 'RestMultiBar' then 
 		return true
