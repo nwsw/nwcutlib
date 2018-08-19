@@ -5,6 +5,7 @@ nwcut.ID='nwcut'
 local StringBuilder = {ID='StringBuilder'}
 local nwcOptList = {ID='nwcOptList'}
 local nwcOptText = {ID='nwcOptText'}
+local nwcUserObjOpt = {ID='nwcUserObjOpt'}
 local nwcOptGroup = {ID='nwcOptGroup'}
 local nwcNotePos = {ID='nwcNotePos'}
 local nwcNotePosList = {ID='nwcNotePosList'}
@@ -69,7 +70,8 @@ nwcut.const = ProtectTable({
 	opt_Text		= 3,
 	opt_List		= 4,
 	opt_Associative	= 5,
-	opt_NotePos		= 6
+	opt_NotePos		= 6,
+	opt_UserObjOpt	= 7,
 	})
 
 -- quick lookup dictionaries
@@ -237,15 +239,17 @@ local OptTag_D = {
 	BracketHeight=7,BracketOffsetNP=7,Color=7,Lower=7,NumBars=7,Pause=7,Repeat=7,StemLength=7,SweepRes=7,Tempo=7,Trans=7,Upper=7,VertOffset=7,Width=7,XAccSpace=7,XNoteSpace=7,
 }
 
+local UserObjNativeOpts = {Class=1,Pos=1,Color=1,Visibility=1}
+
 function nwcut.ClassifyOptTag(ObjType,Tag)
 	-- The OptTag_D dictionary is optimized for speed
 	local c = OptTag_D[Tag]
 
+	if (ObjType == "User") and (not UserObjNativeOpts[Tag]) then return cd.opt_UserObjOpt end
+
 	if not c then
 		-- Tag is Visibility,Color or unlisted
 		return cd.opt_Raw
-	elseif ObjType == "User" then
-		return (Tag == "Pos") and cd.opt_Num or cd.opt_Raw
 	elseif c == 1 then
 		-- Tag is Opts,Dur,Dur2,Endings
 		return cd.opt_Associative
@@ -282,7 +286,8 @@ initProcs:insert(function() OptCapture_D = {
 	[cd.opt_Text] = nwcOptText.new,
 	[cd.opt_List] = nwcOptList.new,
 	[cd.opt_Associative] = nwcOptGroup.new,
-	[cd.opt_NotePos] = nwcNotePosList.new
+	[cd.opt_NotePos] = nwcNotePosList.new,
+	[cd.opt_UserObjOpt] = nwcUserObjOpt.new
 } end)
 --
 function nwcut.CaptureOptData(Level,ObjType,Tag,Data)
@@ -294,12 +299,13 @@ end
 function nwcut.buildEnv() return {
 	nwc=nwc,nwcut=nwcut,StringBuilder=StringBuilder,
 	nwcFile=nwcFile,nwcStaff=nwcStaff,nwcItem=nwcItem,nwcNotePos=nwcNotePos,nwcNotePosList=nwcNotePosList,
-	nwcOptGroup=nwcOptGroup,nwcOptList=nwcOptList,nwcOptText=nwcOptText,nwcPlayContext=nwcPlayContext,
+	nwcOptGroup=nwcOptGroup,nwcOptList=nwcOptList,nwcOptText=nwcOptText,nwcUserObjOpt=nwcUserObjOpt,
+	nwcPlayContext=nwcPlayContext,
 	}
 end
 
 function nwcut.run(usertoolCmd)
-	local vlist = [[_VERSION,arg,assert,bit32,error,getmetatable,ipairs,math,next,pairs,pcall,print,select,setmetatable,string,utf8string,table,tonumber,tostring,type]]
+	local vlist = [[_VERSION,arg,assert,bit32,error,getmetatable,ipairs,math,next,pairs,pcall,print,rawequal,rawget,rawset,select,setmetatable,string,utf8string,table,tonumber,tostring,type]]
 	local SandboxEnv = nwcut.buildEnv()
 	for o in vlist:gmatch("[%w_]+") do SandboxEnv[o] = _ENV[o] end
 	
@@ -350,17 +356,49 @@ nwcOptText.__tostring = StringBuilder.Writer
 
 local TextUnesc_D = {["}"]="|",["]"]="\\",["|"]="|",["\'"]="\'",["\""]="\"",r="\r",n="\n",t="\t"}
 local TextEsc_D = {["|"]="\\}",["\\"]="\\]",["\'"]="\\\'",["\""]="\\\"",["\r"]="\\r",["\n"]="\\n",["\t"]="\\t"}
-function nwcOptText.new(s)
+local new_nwcOptText = function(c,s)
+	local t = {Text=''}
 	if s:match("^[\"\']") then s = s:sub(2,-2) end
-	s = s:gsub("\\(.)",TextUnesc_D)
-	local t = {Text=s}
-	return setmetatable(t,nwcOptText)
+	t.Text = s:gsub("\\(.)",TextUnesc_D)
+	return setmetatable(t,c)
+end
+
+function nwcOptText.new(s)
+	return new_nwcOptText(nwcOptText,s)
 end
 
 function nwcOptText:WriteUsing(writeFunc)
-	local s = self.Text:gsub("([\r\n\t\\|\'\"])",TextEsc_D)
+	writeFunc('"',self.Text:gsub("([\r\n\t\\|\'\"])",TextEsc_D),'"')
+end
 
-	writeFunc('"',s,'"')
+function nwcOptText:gettext() return self.Text end
+function nwcOptText:settext(s) self.Text = tostring(s or '') end
+
+function nwcOptText:len() return self.Text:len() end
+function nwcOptText:lower() return self.Text:lower() end
+function nwcOptText:upper() return self.Text:upper() end
+function nwcOptText:gmatch(p) return self.Text:gmatch(p) end
+function nwcOptText:match(p) return self.Text:match(p) end
+function nwcOptText:find(...) return self.Text:find(...) end
+function nwcOptText:gsub(...) return self.Text:gsub(...) end
+function nwcOptText:sub(...) return self.Text:sub(...) end
+
+------------------------------
+nwcUserObjOpt.__index = nwcUserObjOpt
+nwcUserObjOpt.__tostring = StringBuilder.Writer
+setmetatable(nwcUserObjOpt,{__index=nwcOptText})
+
+function nwcUserObjOpt.new(s)
+	return new_nwcOptText(nwcUserObjOpt,s)
+end
+
+function nwcUserObjOpt:WriteUsing(writeFunc)
+	local s = self.Text:gsub("([\r\n\t\\|\'\"])",TextEsc_D)
+	if s:match('[ \\]') then
+		writeFunc('"',s,'"')
+	else
+		writeFunc(s)
+	end
 end
 
 ------------------------------
