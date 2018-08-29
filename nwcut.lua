@@ -35,6 +35,18 @@ local function mergeItem(o1,o2)	for k,v in pairs(o2.Opts) do o1.Opts[k] = v end 
 local function tableContains(t,o) for k,v in pairs(t) do if v==o then return k end end end
 local function iterlistvals(t) local i=0;return function() i=i+1;if t[i] then return t[i] end;end;end
 
+local TextUnesc_D = {["}"]="|",["]"]="\\",["|"]="|",["\'"]="\'",["\""]="\"",r="\r",n="\n",t="\t"}
+local TextEsc_D = {["|"]="\\}",["\\"]="\\]",["\'"]="\\\'",["\""]="\\\"",["\r"]="\\r",["\n"]="\\n",["\t"]="\\t"}
+
+local function decode_nwctxt(s)
+	if s:match("^[\"\']") then s = s:sub(2,-2) end
+	return s:gsub("\\(.)",TextUnesc_D)
+end
+
+local function encode_nwctxt(s)
+	return  tostring(s):gsub("([\r\n\t\\|\'\"])",TextEsc_D)
+end
+
 nwcut.ProtectTable = ProtectTable
 nwcut.typeOf = typeOf
 nwcut.write=io.write
@@ -64,15 +76,16 @@ nwcut.const = ProtectTable({
 	objtyp_StaffLyric		= 3,
 	objtyp_StaffNotation	= 4,
 
-	-- the fields in a nwcItem can be classified as belonging to one of these groups
-	opt_Raw			= 1,
-	opt_Num			= 2,
-	opt_Text		= 3,
-	opt_List		= 4,
-	opt_Associative	= 5,
-	opt_NotePos		= 6,
-	opt_UserObjOpt	= 7,
-	})
+	-- these opt_* definitions are deprecated...use the actual text strings
+	--[DEPRECATED]
+	opt_Raw			= 'raw',
+	opt_Num			= 'number',
+	opt_Text		= 'text',
+	opt_List		= 'list',
+	opt_Associative	= 'assoc',
+	opt_NotePos		= 'notepos',
+	--[/DEPRECATED]
+})
 
 -- quick lookup dictionaries
 local dict = {
@@ -105,7 +118,7 @@ function nwcut.AllNoteNames() return iterlistvals(dict.NoteNames) end
 function nwcut.AllAccidentals() return iterlistvals(dict.Accidentals) end
 
 function nwcut.getprop(s)
-	if s == "ItemLevel" then return nwcItem.DefaultLevel end
+	if s == 'ItemLevel' then return nwcItem.DefaultLevel end
 	return ldata[s]
 end
 
@@ -116,9 +129,9 @@ function nwcut.writeline(...)
 	local w = nwcut.write
 	for _,v in ipairs(a) do
 		local t = type(v)
-		if (t == "string") or (t == "number") then
+		if (t == 'string') or (t == 'number') then
 			w(v)
-		elseif (t == "table") and v.WriteUsing then
+		elseif (t == 'table') and v.WriteUsing then
 			v:WriteUsing(w)
 		else
 			w(tostring(v))
@@ -141,25 +154,25 @@ function nwcut.preload()
 			local i1,i2,m,v = ln:find("^!(%w+)%(([^%,%)]+)")
 
 			ldata.StartingLine = ln
-			ldata.HdrVersion = v or "0"
+			ldata.HdrVersion = v or '0'
 
-			if m == "NoteWorthyComposer" then
+			if m == 'NoteWorthyComposer' then
 				-- File mode
-				ldata.EndingLine = "!NoteWorthyComposer-End"
+				ldata.EndingLine = '!NoteWorthyComposer-End'
 				ldata.Mode = 2
-			elseif m == "NoteWorthyComposerClip" then
+			elseif m == 'NoteWorthyComposerClip' then
 				-- Clip mode
-				ldata.EndingLine = "!NoteWorthyComposerClip-End"
+				ldata.EndingLine = '!NoteWorthyComposerClip-End'
 				ldata.Mode = 1
 			end
 		elseif lt == cd.ltyp_Comment then
 			local i1,i2,opt,v = ln:find("^%#%/(%w+)%:%s*(.+)$")
-			if opt == "File" then
+			if opt == 'File' then
 				ldata.FileName = v
-			elseif opt == "SavePending" then
-				ldata.SavePending = (v == "Y")
-			elseif opt == "ReturnFormat" then
-				ldata.ReturnMode = (v == "FileText") and cd.mode_FileText or cd.mode_ClipText
+			elseif opt == 'SavePending' then
+				ldata.SavePending = (v == 'Y')
+			elseif opt == 'ReturnFormat' then
+				ldata.ReturnMode = (v == 'FileText') and cd.mode_FileText or cd.mode_ClipText
 			end
 		end
 	end
@@ -245,53 +258,56 @@ function nwcut.ClassifyOptTag(ObjType,Tag)
 	-- The OptTag_D dictionary is optimized for speed
 	local c = OptTag_D[Tag]
 
-	if (ObjType == "User") and (not UserObjNativeOpts[Tag]) then return cd.opt_UserObjOpt end
+	if (ObjType == 'User') and (not UserObjNativeOpts[Tag]) then return 'utext' end
 
 	if not c then
 		-- Tag is Visibility,Color or unlisted
-		return cd.opt_Raw
+		return 'raw'
 	elseif c == 1 then
 		-- Tag is Opts,Dur,Dur2,Endings
-		return cd.opt_Associative
+		return 'assoc'
 	elseif c == 2 then
 		-- Tag is Pos,Pos2
-		if dict.NoteObjTypes[ObjType] then return cd.opt_NotePos end
-		return cd.opt_Num
-	elseif c == 3 or (ObjType == "SongInfo") then
+		if dict.NoteObjTypes[ObjType] then return 'notepos' end
+		return 'number'
+	elseif c == 3 or (ObjType == 'SongInfo') then
 		-- Tag is Text,Name,Label,Group,Typeface
-		return cd.opt_Text
+		return 'text'
 	elseif c == 4 then
 		-- Tag is DynVel,WithNextStaff,WhenHidden
-		return cd.opt_List
+		return 'list'
 	elseif c == 5 then
 		-- Tag is Signature
-		if ObjType == "Key" then return cd.opt_Associative end
+		if ObjType == 'Key' then return 'assoc' end
 	elseif c == 6 then
 		-- Tag is Bar
-		if ObjType == "Context" then return cd.opt_List end
+		if ObjType == 'Context' then return 'list' end
 	elseif c == 7 then
-		return cd.opt_Num
+		return 'number'
 	end
 
-	return cd.opt_Raw
+	return 'raw'
 end
 
-local function retstr(s) return tostring(s) end
-local function retnum(n) return tonumber(n) or tostring(n) end
+local function capture_rawstr(s) return decode_nwctxt(tostring(s)) end
+local function capture_num(n) return tonumber(n) or capture_rawstr(n) end
+
 --
 local OptCapture_D
-initProcs:insert(function() OptCapture_D = {
-	[cd.opt_Raw] = retstr,
-	[cd.opt_Num] = retnum,
-	[cd.opt_Text] = nwcOptText.new,
-	[cd.opt_List] = nwcOptList.new,
-	[cd.opt_Associative] = nwcOptGroup.new,
-	[cd.opt_NotePos] = nwcNotePosList.new,
-	[cd.opt_UserObjOpt] = nwcUserObjOpt.new
-} end)
+initProcs:insert(function()
+	OptCapture_D = {
+		['raw'] = capture_rawstr,
+		['number'] = capture_num,
+		['text'] = nwcOptText.new,
+		['list'] = nwcOptList.new,
+		['assoc'] = nwcOptGroup.new,
+		['notepos'] = nwcNotePosList.new,
+		['utext'] = capture_rawstr
+	}
+end)
 --
 function nwcut.CaptureOptData(Level,ObjType,Tag,Data)
-	local c = cd.opt_Raw
+	local c = 'raw'
 	if Level > 1 then c = nwcut.ClassifyOptTag(ObjType,Tag) end
 	return OptCapture_D[c](tostring(Data))
 end
@@ -311,7 +327,7 @@ function nwcut.run(usertoolCmd)
 	
 	nwcut.preload()
 
-	assert(loadfile(usertoolCmd,"t",SandboxEnv))()
+	assert(loadfile(usertoolCmd,'t',SandboxEnv))()
 end
 
 -------------------------------------
@@ -354,13 +370,8 @@ end
 nwcOptText.__index = nwcOptText
 nwcOptText.__tostring = StringBuilder.Writer
 
-local TextUnesc_D = {["}"]="|",["]"]="\\",["|"]="|",["\'"]="\'",["\""]="\"",r="\r",n="\n",t="\t"}
-local TextEsc_D = {["|"]="\\}",["\\"]="\\]",["\'"]="\\\'",["\""]="\\\"",["\r"]="\\r",["\n"]="\\n",["\t"]="\\t"}
 local new_nwcOptText = function(c,s)
-	local t = {Text=''}
-	if s:match("^[\"\']") then s = s:sub(2,-2) end
-	t.Text = s:gsub("\\(.)",TextUnesc_D)
-	return setmetatable(t,c)
+	return setmetatable({Text=decode_nwctxt(s)},c)
 end
 
 function nwcOptText.new(s)
@@ -368,7 +379,7 @@ function nwcOptText.new(s)
 end
 
 function nwcOptText:WriteUsing(writeFunc)
-	writeFunc('"',self.Text:gsub("([\r\n\t\\|\'\"])",TextEsc_D),'"')
+	writeFunc('"',encode_nwctxt(self.Text),'"')
 end
 
 function nwcOptText:gettext() return self.Text end
@@ -382,24 +393,6 @@ function nwcOptText:match(p) return self.Text:match(p) end
 function nwcOptText:find(...) return self.Text:find(...) end
 function nwcOptText:gsub(...) return self.Text:gsub(...) end
 function nwcOptText:sub(...) return self.Text:sub(...) end
-
-------------------------------
-nwcUserObjOpt.__index = nwcUserObjOpt
-nwcUserObjOpt.__tostring = StringBuilder.Writer
-setmetatable(nwcUserObjOpt,{__index=nwcOptText})
-
-function nwcUserObjOpt.new(s)
-	return new_nwcOptText(nwcUserObjOpt,s)
-end
-
-function nwcUserObjOpt:WriteUsing(writeFunc)
-	local s = self.Text:gsub("([\r\n\t\\|\'\"])",TextEsc_D)
-	if s:match('[ \\]') then
-		writeFunc('"',s,'"')
-	else
-		writeFunc(s)
-	end
-end
 
 ------------------------------
 nwcOptList.__index = nwcOptList
@@ -460,9 +453,9 @@ function nwcNotePos.new(s)
 	if Accidental ~= "" then a.Accidental = Accidental end
 	if Position ~= "" then a.Position = tonumber(Position) end
 	if Notehead ~= "" then a.Notehead = Notehead end
-	if Tied == "^" then a.Tied = true end
+	if Tied == '^' then a.Tied = true end
 	if Color ~= "" then a.Color = tonumber(Color) end
-	if CourtesyAcc == ")" then a.CourtesyAcc = true end
+	if CourtesyAcc == ')' then a.CourtesyAcc = true end
 	return setmetatable(a,nwcNotePos)
 end
 
@@ -470,9 +463,9 @@ function nwcNotePos:WriteUsing(writeFunc)
 	if self.Accidental then writeFunc(self.Accidental) end
 	writeFunc(self.Position)
 	if self.Notehead then writeFunc(self.Notehead) end
-	if self.Tied then writeFunc("^") end
-	if self.Color and (tonumber(self.Color) > 0) then  writeFunc("!",self.Color) end
-	if self.CourtesyAcc then writeFunc(")") end
+	if self.Tied then writeFunc('^') end
+	if self.Color and (tonumber(self.Color) > 0) then  writeFunc('!',self.Color) end
+	if self.CourtesyAcc then writeFunc(')') end
 end
 
 function nwcNotePos:GetAccidentalPitchOffset()
@@ -528,10 +521,10 @@ function nwcItem.new(cliptext,level)
 	for sep,fld in cliptext:gmatch("([|%s]+)([^|]+)") do
 		if not ObjType then
 			ObjType = fld
-		elseif ObjType == "Fake" then
+		elseif ObjType == 'Fake' then
 			ObjType = fld
 			isFake = true
-		elseif (ObjType == "User") and not UserType then
+		elseif (ObjType == 'User') and not UserType then
 			UserType = fld
 		else
 			local lbl,data = fld:match("^([%w%-%_]+)[%:%s]+(.*)")
@@ -542,9 +535,9 @@ function nwcItem.new(cliptext,level)
 	end
 
 	if ObjType then
-		local item = {["ObjType"]=ObjType,["Opts"]=Opts,["Level"]=level}
+		local item = {['ObjType']=ObjType,['Opts']=Opts,['Level']=level}
 		if isFake then item.Fake = true end
-		if ObjType == "User" then item.UserType = UserType or "..." end
+		if ObjType == 'User' then item.UserType = UserType or "..." end
 		setmetatable(item,nwcItem)
 		return item
 	end
@@ -555,18 +548,26 @@ end
 function nwcItem:WriteUsing(writeFunc)
 	if self.Fake then writeFunc("|Fake") end
 
-	writeFunc("|",self.ObjType)
+	writeFunc('|',self.ObjType)
 
-	if self.UserType then writeFunc("|",self.UserType) end
+	if self.UserType then writeFunc('|',self.UserType) end
 
 	for k,v in pairs(self.Opts) do
-		writeFunc("|",k)
+		writeFunc('|',k)
 		if v then
-			writeFunc(":")
-			if (type(v) == "table") and v.WriteUsing then 
+			local vtyp = type(v)
+			writeFunc(':')
+			if (vtyp == 'table') and v.WriteUsing then 
 				v:WriteUsing(writeFunc)
 			else
-				writeFunc(tostring(v))
+				local s = encode_nwctxt(v)
+				local vclss = nwcut.ClassifyOptTag(self.ObjType,k)
+				local forcequote = (vclss == 'utext') and '[ \\]' or '[\\]'
+				if s:match(forcequote) then
+					writeFunc('"',s,'"')
+				else
+					writeFunc(s)
+				end
 			end
 		end
 	end
@@ -873,8 +874,8 @@ nwcPlayContext.__tostring = StringBuilder.Writer
 
 function nwcPlayContext.new()
 	local c = {
-		Clef="Treble",
-		ClefOctave="None",
+		Clef='Treble',
+		ClefOctave='None',
 		Transposition=0,
 		KeyTonic='C',
 		NextBarNum=1,
@@ -943,7 +944,7 @@ function nwcPlayContext:GetNoteMidiPitch(notepitchObj)
 end
 
 function nwcPlayContext:FindTieIndex(o)
-	local accPos = (typeOf(o) == "nwcNotePos") and string.format("%s%d",self:GetNoteAccidental(o),o.Position) or tostring(o)
+	local accPos = (typeOf(o) == 'nwcNotePos') and string.format("%s%d",self:GetNoteAccidental(o),o.Position) or tostring(o)
 
 	for i,v in ripairs(self.Ties) do
 		if v == accPos then return i end
@@ -952,7 +953,7 @@ function nwcPlayContext:FindTieIndex(o)
 	return false
 end
 
-local PlayContextSaveRestoreFlds = {"Clef","ClefOctave","Transposition","Key","RunKey","KeyTonic","Ties","Slur"}
+local PlayContextSaveRestoreFlds = {'Clef','ClefOctave','Transposition','Key','RunKey','KeyTonic','Ties','Slur'}
 local function copyPlayContextFromTo(r1,r2)
 	for _,k in ipairs(PlayContextSaveRestoreFlds) do
 		local v = r1[k]
@@ -994,39 +995,39 @@ function nwcPlayContext:put(o)
 
 		copyKeySig(self.RunKey,RunKey_Changes)
 
-		if (not hasValue(o:Get("Dur","Grace"))) then
-			self.Slur = hasValue(o:Get("Dur","Slur"))
+		if (not hasValue(o:Get('Dur','Grace'))) then
+			self.Slur = hasValue(o:Get('Dur','Slur'))
 		end
 
 		if (self.PendingBarIncrement) then
 			self.NextBarNum = self.NextBarNum + 1
 			self.PendingBarIncrement = false
 		end
-	elseif (o.ObjType == "Context") then
-		local OptBar = o:Get("Bar")
+	elseif (o.ObjType == 'Context') then
+		local OptBar = o:Get('Bar')
 		if (hasValue(OptBar)) then
 			self.NextBarNum = tonumber(OptBar[1] or 1)
-			self.PendingBarIncrement = (OptBar:Find("AtStart") ~= nil)
+			self.PendingBarIncrement = (OptBar:Find('AtStart') ~= nil)
 			if (not self.PendingBarIncrement) then self.NextBarNum = self.NextBarNum + 1 end
 		end
-	elseif (o.ObjType == "Bar") then
+	elseif (o.ObjType == 'Bar') then
 		copyKeySig(self.RunKey,self.Key)
-		if (o:Get("Style") == "MasterRepeatOpen") then self.SeenFirstEnding = false end
-		self.PendingBarIncrement = (o:Get("XBarCnt") ~= "Y")
-	elseif (o.ObjType == "RestMultiBar") then
+		if (o:Get('Style') == 'MasterRepeatOpen') then self.SeenFirstEnding = false end
+		self.PendingBarIncrement = (o:Get('XBarCnt') ~= 'Y')
+	elseif (o.ObjType == 'RestMultiBar') then
 		if (self.PendingBarIncrement) then self.NextBarNum=self.NextBarNum+1 end
 		self.PendingBarIncrement = false;
-		self.NextBarNum = self.NextBarNum + tonumber(o:Get("NumBars") or 1) - 1
-	elseif (o.ObjType == "Clef") then
-		self.Clef = o:Get("Type") or "Treble"
-		self.ClefOctave = o:Get("OctaveShift") or "None"
-	elseif (o.ObjType == "Key") then
-		local k = o:Get("Signature")
+		self.NextBarNum = self.NextBarNum + tonumber(o:Get('NumBars') or 1) - 1
+	elseif (o.ObjType == 'Clef') then
+		self.Clef = o:Get('Type') or 'Treble'
+		self.ClefOctave = o:Get('OctaveShift') or 'None'
+	elseif (o.ObjType == 'Key') then
+		local k = o:Get('Signature')
 		if (hasValue(k)) then
 			for _,notename in ipairs(dict.NoteNames) do
 				local a = 0
-				if (k[notename.."b"]) then a = a - 1
-				elseif (k[notename.."#"]) then a = a + 1
+				if (k[notename..'b']) then a = a - 1
+				elseif (k[notename..'#']) then a = a + 1
 				end
 
 				self.Key[notename] = a
@@ -1034,13 +1035,13 @@ function nwcPlayContext:put(o)
 		end
 
 		copyKeySig(self.RunKey,self.Key)
-		self.KeyTonic = o:Get("Tonic") or "C"
-	elseif (o.ObjType == "Instrument") then
-		self.Transposition = tonumber(o:Get("Trans") or 0)
-	elseif (o.ObjType == "Ending") then
-		local e = o:Get("Endings")
+		self.KeyTonic = o:Get('Tonic') or 'C'
+	elseif (o.ObjType == 'Instrument') then
+		self.Transposition = tonumber(o:Get('Trans') or 0)
+	elseif (o.ObjType == 'Ending') then
+		local e = o:Get('Endings')
 		if (hasValue(e)) then
-			if e["1"] then
+			if e['1'] then
 				if (not self.SeenFirstEnding) then
 					self.SeenFirstEnding = true
 					copyPlayContextFromTo(self,self.Ending1Context)
