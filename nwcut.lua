@@ -4,8 +4,6 @@ nwcut.ID='nwcut'
 
 local StringBuilder = {ID='StringBuilder'}
 local nwcOptList = {ID='nwcOptList'}
-local nwcOptText = {ID='nwcOptText'}
-local nwcUserObjOpt = {ID='nwcUserObjOpt'}
 local nwcOptGroup = {ID='nwcOptGroup'}
 local nwcNotePos = {ID='nwcNotePos'}
 local nwcNotePosList = {ID='nwcNotePosList'}
@@ -298,7 +296,7 @@ initProcs:insert(function()
 	OptCapture_D = {
 		['raw'] = capture_rawstr,
 		['number'] = capture_num,
-		['text'] = nwcOptText.new,
+		['text'] = capture_rawstr,
 		['list'] = nwcOptList.new,
 		['assoc'] = nwcOptGroup.new,
 		['notepos'] = nwcNotePosList.new,
@@ -315,7 +313,7 @@ end
 function nwcut.buildEnv() return {
 	nwc=nwc,nwcut=nwcut,StringBuilder=StringBuilder,
 	nwcFile=nwcFile,nwcStaff=nwcStaff,nwcItem=nwcItem,nwcNotePos=nwcNotePos,nwcNotePosList=nwcNotePosList,
-	nwcOptGroup=nwcOptGroup,nwcOptList=nwcOptList,nwcOptText=nwcOptText,nwcUserObjOpt=nwcUserObjOpt,
+	nwcOptGroup=nwcOptGroup,nwcOptList=nwcOptList,
 	nwcPlayContext=nwcPlayContext,
 	}
 end
@@ -365,34 +363,6 @@ function StringBuilder.Writer(obj)
 	obj:WriteUsing(function(...) st:add(...) end)
 	return tostring(st)
 end
-
-------------------------------
-nwcOptText.__index = nwcOptText
-nwcOptText.__tostring = StringBuilder.Writer
-
-local new_nwcOptText = function(c,s)
-	return setmetatable({Text=decode_nwctxt(s)},c)
-end
-
-function nwcOptText.new(s)
-	return new_nwcOptText(nwcOptText,s)
-end
-
-function nwcOptText:WriteUsing(writeFunc)
-	writeFunc('"',encode_nwctxt(self.Text),'"')
-end
-
-function nwcOptText:gettext() return self.Text end
-function nwcOptText:settext(s) self.Text = tostring(s or '') end
-
-function nwcOptText:len() return self.Text:len() end
-function nwcOptText:lower() return self.Text:lower() end
-function nwcOptText:upper() return self.Text:upper() end
-function nwcOptText:gmatch(p) return self.Text:gmatch(p) end
-function nwcOptText:match(p) return self.Text:match(p) end
-function nwcOptText:find(...) return self.Text:find(...) end
-function nwcOptText:gsub(...) return self.Text:gsub(...) end
-function nwcOptText:sub(...) return self.Text:sub(...) end
 
 ------------------------------
 nwcOptList.__index = nwcOptList
@@ -545,6 +515,7 @@ function nwcItem.new(cliptext,level)
 	return nil
 end
 
+local forcequoteMatchStr = {text='.*',utext='[ \\]'}
 function nwcItem:WriteUsing(writeFunc)
 	if self.Fake then writeFunc("|Fake") end
 
@@ -562,7 +533,7 @@ function nwcItem:WriteUsing(writeFunc)
 			else
 				local s = encode_nwctxt(v)
 				local vclss = nwcut.ClassifyOptTag(self.ObjType,k)
-				local forcequote = (vclss == 'utext') and '[ \\]' or '[\\]'
+				local forcequote = forcequoteMatchStr[vclss] or '\\'
 				if s:match(forcequote) then
 					writeFunc('"',s,'"')
 				else
