@@ -26,6 +26,7 @@ end
 
 local function typeOf(o) local t=type(o) return (t=='table') and o.ID or t end
 local function hasValue(v) return (v and (v ~= "")) or false end
+local function makeBoolean(v) return v and true or false end
 local function parmswap(swap,v1,v2) if swap then return v2,v1 else return v1,v2 end end
 local function copyKeySig(dest,src)	for k,v in pairs(src) do dest[k] = v end end
 local function ripairs(t) local function r2(t,i) i=i-1;if t[i]~=nil then return i,t[i] end end return r2, t, #t+1 end
@@ -50,6 +51,8 @@ nwcut.typeOf = typeOf
 nwcut.write=io.write
 nwcut.stderr=io.stderr
 nwcut.warn=function(...) nwcut.stderr:write(...) end
+nwcut.decodeText = decode_nwctxt
+nwcut.encodeText = encode_nwctxt
 
 nwcut.const = ProtectTable({
 	-- Possible processing modes
@@ -966,8 +969,8 @@ function nwcPlayContext:put(o)
 
 		copyKeySig(self.RunKey,RunKey_Changes)
 
-		if (not hasValue(o:Get('Dur','Grace'))) then
-			self.Slur = hasValue(o:Get('Dur','Slur'))
+		if (not o:Get('Dur','Grace')) then
+			self.Slur = makeBoolean(o:Get('Dur','Slur'))
 		end
 
 		if (self.PendingBarIncrement) then
