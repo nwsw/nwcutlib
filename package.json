@@ -1,0 +1,23 @@
+{
+  "name": "nwcutlib",
+  "version": "2.79.1",
+  "description": "NWC User Tool Library for Lua Scripts",
+  "main": "simulation.lua",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nwsw/nwcutlib.git"
+  },
+  "keywords": [
+    "nwc",
+    "lua"
+  ],
+  "author": "Noteworthy Software, Inc.",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/nwsw/nwcutlib/issues"
+  },
+  "homepage": "https://lua.noteworthycomposer.com"
+}
