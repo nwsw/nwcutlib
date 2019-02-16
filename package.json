@@ -16,8 +16,5 @@
   ],
   "author": "Noteworthy Software, Inc.",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/nwsw/nwcutlib/issues"
-  },
   "homepage": "https://lua.noteworthycomposer.com"
 }
